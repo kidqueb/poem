@@ -322,13 +322,12 @@ where
     }
 }
 
-/// The enum `EitherMiddleware` with variants `Left`` and `Right` is a general
+/// The enum `EitherMiddleware` with variants `Left` and `Right` is a general
 /// purpose sum type with two cases.
-
 pub enum EitherMiddleware<A, B, E> {
-    /// A middlware of type `A`
+    /// A middleware of type `A`
     A(A, PhantomData<E>),
-    /// B middlware of type `B`
+    /// B middleware of type `B`
     B(B, PhantomData<E>),
 }
 

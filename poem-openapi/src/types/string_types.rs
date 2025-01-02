@@ -48,7 +48,7 @@ macro_rules! impl_string_types {
             type RawElementValueType = Self;
 
             fn name() -> Cow<'static, str> {
-                concat!($type_name, "(", $format, ")").into()
+                concat!($type_name, "_", $format).into()
             }
 
             fn schema_ref() -> MetaSchemaRef {
@@ -126,7 +126,7 @@ impl_string_types!(
 
 #[cfg(feature = "hostname")]
 impl_string_types!(
-    /// A email address type.
+    /// A hostname type.
     #[cfg_attr(docsrs, doc(cfg(feature = "hostname")))]
     Hostname,
     "string",

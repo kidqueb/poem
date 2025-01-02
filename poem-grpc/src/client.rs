@@ -27,19 +27,25 @@ use crate::{
 pub(crate) type BoxBody = http_body_util::combinators::BoxBody<Bytes, IoError>;
 
 /// A configuration for GRPC client
-#[derive(Default)]
 pub struct ClientConfig {
     uris: Vec<Uri>,
     origin: Option<Uri>,
     user_agent: Option<HeaderValue>,
     tls_config: Option<TlsClientConfig>,
+    max_header_list_size: u32,
 }
 
 impl ClientConfig {
     /// Create a `ClientConfig` builder
     pub fn builder() -> ClientConfigBuilder {
         ClientConfigBuilder {
-            config: Ok(ClientConfig::default()),
+            config: Ok(ClientConfig {
+                uris: vec![],
+                origin: None,
+                user_agent: None,
+                tls_config: None,
+                max_header_list_size: 16384,
+            }),
         }
     }
 }
@@ -146,6 +152,16 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the max size of received header frames.
+    ///
+    /// Default is `16384` bytes.
+    pub fn http2_max_header_list_size(mut self, max: u32) -> Self {
+        if let Ok(config) = &mut self.config {
+            config.max_header_list_size = max;
+        }
+        self
+    }
+
     /// Consumes this builder and returns the `ClientConfig`
     pub fn build(self) -> Result<ClientConfig, ClientBuilderError> {
         self.config
@@ -156,7 +172,7 @@ impl ClientConfigBuilder {
 #[derive(Clone)]
 pub struct GrpcClient {
     ep: Arc<dyn DynEndpoint<Output = HttpResponse> + 'static>,
-    send_compressd: Option<CompressionEncoding>,
+    send_compressed: Option<CompressionEncoding>,
     accept_compressed: Arc<[CompressionEncoding]>,
 }
 
@@ -165,7 +181,7 @@ impl GrpcClient {
     pub fn new(config: ClientConfig) -> Self {
         Self {
             ep: create_client_endpoint(config),
-            send_compressd: None,
+            send_compressed: None,
             accept_compressed: Arc::new([]),
         }
     }
@@ -178,13 +194,13 @@ impl GrpcClient {
     {
         Self {
             ep: Arc::new(ToDynEndpoint(ep.map_to_response())),
-            send_compressd: None,
+            send_compressed: None,
             accept_compressed: Arc::new([]),
         }
     }
 
     pub fn set_send_compressed(&mut self, encoding: CompressionEncoding) {
-        self.send_compressd = Some(encoding);
+        self.send_compressed = Some(encoding);
     }
 
     pub fn set_accept_compressed(&mut self, encodings: impl Into<Arc<[CompressionEncoding]>>) {
@@ -214,11 +230,11 @@ impl GrpcClient {
             extensions,
         } = request;
         let mut http_request =
-            create_http_request::<T>(path, metadata, extensions, self.send_compressd);
+            create_http_request::<T>(path, metadata, extensions, self.send_compressed);
         http_request.set_body(create_encode_request_body(
             codec.encoder(),
             Streaming::new(futures_util::stream::once(async move { Ok(message) })),
-            self.send_compressd,
+            self.send_compressed,
         ));
 
         let mut resp = self
@@ -263,11 +279,11 @@ impl GrpcClient {
             extensions,
         } = request;
         let mut http_request =
-            create_http_request::<T>(path, metadata, extensions, self.send_compressd);
+            create_http_request::<T>(path, metadata, extensions, self.send_compressed);
         http_request.set_body(create_encode_request_body(
             codec.encoder(),
             message,
-            self.send_compressd,
+            self.send_compressed,
         ));
 
         let mut resp = self
@@ -312,11 +328,11 @@ impl GrpcClient {
             extensions,
         } = request;
         let mut http_request =
-            create_http_request::<T>(path, metadata, extensions, self.send_compressd);
+            create_http_request::<T>(path, metadata, extensions, self.send_compressed);
         http_request.set_body(create_encode_request_body(
             codec.encoder(),
             Streaming::new(futures_util::stream::once(async move { Ok(message) })),
-            self.send_compressd,
+            self.send_compressed,
         ));
 
         let mut resp = self
@@ -357,11 +373,11 @@ impl GrpcClient {
             extensions,
         } = request;
         let mut http_request =
-            create_http_request::<T>(path, metadata, extensions, self.send_compressd);
+            create_http_request::<T>(path, metadata, extensions, self.send_compressed);
         http_request.set_body(create_encode_request_body(
             codec.encoder(),
             message,
-            self.send_compressd,
+            self.send_compressed,
         ));
 
         let mut resp = self
@@ -395,7 +411,7 @@ fn create_http_request<T: Codec>(
     path: &str,
     metadata: Metadata,
     extensions: Extensions,
-    send_compressd: Option<CompressionEncoding>,
+    send_compressed: Option<CompressionEncoding>,
 ) -> HttpRequest {
     let mut http_request = HttpRequest::builder()
         .uri_str(path)
@@ -410,10 +426,10 @@ fn create_http_request<T: Codec>(
     http_request
         .headers_mut()
         .insert(header::TE, "trailers".parse().unwrap());
-    if let Some(send_compressd) = send_compressd {
+    if let Some(send_compressed) = send_compressed {
         http_request.headers_mut().insert(
             "grpc-encoding",
-            HeaderValue::from_str(send_compressd.as_str()).expect("BUG: invalid encoding"),
+            HeaderValue::from_str(send_compressed.as_str()).expect("BUG: invalid encoding"),
         );
     }
     http_request
@@ -451,6 +467,7 @@ fn create_client_endpoint(
     let mut config = config;
     let cli = Client::builder(TokioExecutor::new())
         .http2_only(true)
+        .http2_max_header_list_size(config.max_header_list_size)
         .build(HttpsConnector::new(config.tls_config.take()));
 
     let config = Arc::new(config);
